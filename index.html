@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Quiz App with Firebase</title>
+  <style>
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background: linear-gradient(135deg, #c3ec52 0%, #0ba29d 100%);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      margin: 0;
+      animation: fadeIn 1s ease-in;
+    }
+    #quiz {
+      background: white;
+      padding: 30px;
+      border-radius: 16px;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+      max-width: 600px;
+      width: 100%;
+      animation: slideIn 0.5s ease-out;
+    }
+    @keyframes slideIn {
+      from { transform: translateY(30px); opacity: 0; }
+      to { transform: translateY(0); opacity: 1; }
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+    #question {
+      font-size: 1.4rem;
+      margin-bottom: 20px;
+    }
+    #options button {
+      display: block;
+      width: 100%;
+      margin-bottom: 10px;
+      padding: 12px;
+      border: none;
+      border-radius: 10px;
+      background: #1d72b8;
+      color: white;
+      font-size: 1rem;
+      cursor: pointer;
+      transition: background 0.3s;
+    }
+    #options button.correct {
+      background-color: #28a745;
+    }
+    #options button.incorrect {
+      background-color: #dc3545;
+    }
+    #options button:hover {
+      background: #155a96;
+    }
+    #progress {
+      margin-top: 10px;
+      font-size: 0.95rem;
+      color: #333;
+    }
+    #timer {
+      font-size: 1.2rem;
+      color: #d9534f;
+      text-align: right;
+      margin-bottom: 10px;
+    }
+    .timer-bar {
+      height: 6px;
+      background: #ff9800;
+      margin-top: 4px;
+      border-radius: 5px;
+      transition: width 1s linear;
+    }
+    #score-screen {
+      text-align: center;
+    }
+    #score-screen input {
+      padding: 10px;
+      margin: 10px 0;
+      width: 80%;
+      border: 1px solid #ccc;
+      border-radius: 8px;
+    }
+    #score-screen button {
+      padding: 10px 20px;
+      border: none;
+      background: #28a745;
+      color: white;
+      border-radius: 8px;
+      cursor: pointer;
+      margin-top: 10px;
+    }
+    #leaderboardList {
+      list-style: none;
+      padding: 0;
+      margin-top: 10px;
+      text-align: left;
+    }
+  </style>
+</head>
+<body>
+  <div id="quiz">
+    <div id="timer"></div>
+    <div id="timerProgress" class="timer-bar"></div>
+    <div id="question"></div>
+    <div id="options"></div>
+    <div id="progress"></div>
+    <div id="score-screen" style="display:none;">
+      <h2>You scored <span id="score"></span> out of <span id="total"></span></h2>
+      <input type="text" id="playerName" placeholder="Enter your name" />
+      <button onclick="saveScore()">Submit Score</button>
+      <ol id="leaderboardList"></ol>
+      <button onclick="startQuiz()">Retry Quiz</button>
+    </div>
+    <audio id="correctSound" src="https://www.soundjay.com/buttons/sounds/button-3.mp3" preload="auto"></audio>
+    <audio id="wrongSound" src="https://www.soundjay.com/buttons/sounds/button-10.mp3" preload="auto"></audio>
+  </div>
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.7.3/firebase-app.js";
+    import { getFirestore, collection, addDoc, query, orderBy, limit, getDocs, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.7.3/firebase-firestore.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyAHVp3TFDTezIzjwpbLcQVby3g35nZDlXo",
+      authDomain: "quiz-app-f0426.firebaseapp.com",
+      projectId: "quiz-app-f0426",
+      storageBucket: "quiz-app-f0426.firebasestorage.app",
+      messagingSenderId: "788767888276",
+      appId: "1:788767888276:web:81be47350eaf6ec60d3581",
+      measurementId: "G-CZBB22S2PM"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+
+    const quizData = [
+      { question: "What is the capital of France?", options: ["Paris", "Rome", "Berlin", "Madrid"], answer: "Paris" },
+      { question: "Who discovered gravity?", options: ["Einstein", "Newton", "Galileo", "Tesla"], answer: "Newton" },
+      { question: "Which planet is known as the Red Planet?", options: ["Earth", "Mars", "Jupiter", "Venus"], answer: "Mars" },
+      { question: "Which is the longest river in the world?", options: ["Amazon", "Nile", "Yangtze", "Mississippi"], answer: "Nile" },
+      { question: "How many continents are there?", options: ["5", "6", "7", "8"], answer: "7" },
+      { question: "What is the smallest country in the world?", options: ["Monaco", "Nauru", "Vatican City", "Malta"], answer: "Vatican City" },
+      { question: "Who wrote 'Hamlet'?", options: ["Shakespeare", "Dickens", "Austen", "Tolstoy"], answer: "Shakespeare" },
+      { question: "What is the chemical symbol for water?", options: ["H2O", "O2", "CO2", "HO2"], answer: "H2O" },
+      { question: "Which ocean is the largest?", options: ["Atlantic", "Indian", "Pacific", "Arctic"], answer: "Pacific" },
+      { question: "Which animal is known as the King of the Jungle?", options: ["Tiger", "Lion", "Elephant", "Gorilla"], answer: "Lion" }
+    ];
+
+    let currentQuestion = 0;
+    let score = 0;
+    let timerInterval;
+    const TIMER_DURATION = 15;
+
+    const questionEl = document.getElementById("question");
+    const optionsEl = document.getElementById("options");
+    const progressEl = document.getElementById("progress");
+    const scoreScreenEl = document.getElementById("score-screen");
+    const scoreEl = document.getElementById("score");
+    const totalEl = document.getElementById("total");
+    const leaderboardListEl = document.getElementById("leaderboardList");
+    const timerEl = document.getElementById("timer");
+    const timerProgress = document.getElementById("timerProgress");
+    const correctSound = document.getElementById("correctSound");
+    const wrongSound = document.getElementById("wrongSound");
+
+    function startQuiz() {
+      scoreScreenEl.style.display = "none";
+      currentQuestion = 0;
+      score = 0;
+      showQuestion();
+    }
+
+    function showQuestion() {
+      const q = quizData[currentQuestion];
+      questionEl.textContent = q.question;
+      optionsEl.innerHTML = "";
+      q.options.forEach(option => {
+        const btn = document.createElement("button");
+        btn.textContent = option;
+        btn.onclick = () => checkAnswer(option, btn);
+        optionsEl.appendChild(btn);
+      });
+      updateProgress();
+      startTimer();
+    }
+
+    function startTimer() {
+      let timeLeft = TIMER_DURATION;
+      timerEl.textContent = `⏱️ ${timeLeft}s`;
+      timerProgress.style.width = '100%';
+      clearInterval(timerInterval);
+      timerInterval = setInterval(() => {
+        timeLeft--;
+        timerEl.textContent = `⏱️ ${timeLeft}s`;
+        timerProgress.style.width = `${(timeLeft / TIMER_DURATION) * 100}%`;
+        if (timeLeft <= 0) {
+          clearInterval(timerInterval);
+          revealAnswer(null);
+        }
+      }, 1000);
+    }
+
+    function checkAnswer(selected, buttonEl) {
+      clearInterval(timerInterval);
+      const correct = quizData[currentQuestion].answer;
+      const buttons = optionsEl.querySelectorAll("button");
+      buttons.forEach(btn => {
+        if (btn.textContent === correct) {
+          btn.classList.add("correct");
+        } else {
+          btn.classList.add("incorrect");
+        }
+        btn.disabled = true;
+      });
+      if (selected === correct) {
+        score++;
+        correctSound.play();
+      } else {
+        wrongSound.play();
+      }
+      setTimeout(() => {
+        currentQuestion++;
+        if (currentQuestion < quizData.length) {
+          showQuestion();
+        } else {
+          showScore();
+        }
+      }, 1500);
+    }
+
+    function updateProgress() {
+      progressEl.textContent = `Question ${currentQuestion + 1} of ${quizData.length}`;
+    }
+
+    function showScore() {
+      questionEl.textContent = "";
+      optionsEl.innerHTML = "";
+      progressEl.textContent = "";
+      timerEl.textContent = "";
+      timerProgress.style.width = "0";
+      scoreEl.textContent = score;
+      totalEl.textContent = quizData.length;
+      scoreScreenEl.style.display = "block";
+      loadLeaderboard();
+    }
+
+    async function saveScore() {
+      const nameInput = document.getElementById("playerName");
+      const name = nameInput.value.trim();
+      if (!name) {
+        alert("Please enter your name!");
+        return;
+      }
+      try {
+        await addDoc(collection(db, "quizScores"), {
+          name,
+          score,
+          timestamp: serverTimestamp()
+        });
+        alert("Score saved!");
+        nameInput.value = "";
+        loadLeaderboard();
+      } catch (error) {
+        alert("Error saving score: " + error.message);
+      }
+    }
+
+    async function loadLeaderboard() {
+      leaderboardListEl.innerHTML = "";
+      try {
+        const q = query(collection(db, "quizScores"), orderBy("score", "desc"), limit(5));
+        const querySnapshot = await getDocs(q);
+        querySnapshot.forEach(doc => {
+          const data = doc.data();
+          const li = document.createElement("li");
+          li.textContent = `${data.name} - ${data.score}`;
+          leaderboardListEl.appendChild(li);
+        });
+      } catch (error) {
+        leaderboardListEl.innerHTML = "<li>Failed to load leaderboard</li>";
+      }
+    }
+
+    startQuiz();
+
+    window.saveScore = saveScore;
+    window.startQuiz = startQuiz;
+  </script>
+</body>
+</html>
+
